@@ -47,8 +47,12 @@ subscription_fetch() {
 
     # OpenWrt's default "wget" is the uclient-fetch shim, which doesn't support reading response
     # headers (-S). curl is a hard dependency of this package, so use it instead.
-    if ! curl -fsS -m 30 -D "$tmp_headers" -o "$tmp_json" "$url"; then
-        log "Failed to download subscription for section '$section' from '$url'" "error"
+    local curl_error curl_exit_code
+    curl_error="$(curl -fsS -m 30 -D "$tmp_headers" -o "$tmp_json" "$url" 2>&1 > /dev/null)"
+    curl_exit_code=$?
+    if [ "$curl_exit_code" -ne 0 ]; then
+        log "Failed to download subscription for section '$section' from '$url' (curl exit code $curl_exit_code: $curl_error)" \
+            "error"
         rm -f "$tmp_json" "$tmp_headers"
         return 1
     fi
