@@ -45,7 +45,9 @@ subscription_fetch() {
     tmp_json="$(mktemp)"
     tmp_headers="$(mktemp)"
 
-    if ! wget -q -S -O "$tmp_json" "$url" 2> "$tmp_headers"; then
+    # OpenWrt's default "wget" is the uclient-fetch shim, which doesn't support reading response
+    # headers (-S). curl is a hard dependency of this package, so use it instead.
+    if ! curl -fsS -m 30 -D "$tmp_headers" -o "$tmp_json" "$url"; then
         log "Failed to download subscription for section '$section' from '$url'" "error"
         rm -f "$tmp_json" "$tmp_headers"
         return 1
