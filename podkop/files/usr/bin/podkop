@@ -802,6 +802,11 @@ configure_outbound_handler() {
                 fi
             fi
 
+            if [ -z "$(subscription_list_locations "$section")" ]; then
+                log "Subscription for section '$section' produced no usable servers. Aborted." "fatal"
+                exit 1
+            fi
+
             config="$(sing_box_cf_add_subscription_outbounds "$config" "$section" "$udp_over_tcp" \
                 "$urltest_check_interval" "$urltest_tolerance" "$urltest_testing_url")"
             ;;

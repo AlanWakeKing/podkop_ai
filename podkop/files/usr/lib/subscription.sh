@@ -10,7 +10,7 @@
 #   profile-update-interval: <hours>            - how often the subscription should be re-fetched
 #   subscription-userinfo: ...expire=<unix ts>  - when the subscription stops being valid (0 = never)
 
-SUBSCRIPTION_PROFILE_EXCLUDE_REGEX="balanser|xhttp"
+SUBSCRIPTION_PROFILE_EXCLUDE_KEYWORDS="balanser,xhttp"
 SUBSCRIPTION_DEFAULT_UPDATE_INTERVAL_HOURS=3
 
 subscription_cache_json_path() {
@@ -133,8 +133,18 @@ subscription_list_servers() {
     json_path="$(subscription_cache_json_path "$section")"
     [ -f "$json_path" ] || return 1
 
-    jq -r --arg exclude "$SUBSCRIPTION_PROFILE_EXCLUDE_REGEX" '
+    # Deliberately avoids jq's regex builtins (test/match/gsub/splits) - some OpenWrt jq builds ship
+    # without the oniguruma regex module, in which case those calls fail silently mid-pipeline and
+    # the whole filter produces no output. Only plain string ops (contains, split(str), ascii_downcase,
+    # slicing) are used here, all of which work on any jq 1.6+ build.
+    jq -r --arg exclude_keywords "$SUBSCRIPTION_PROFILE_EXCLUDE_KEYWORDS" '
+        ($exclude_keywords | split(",")) as $exclude_keywords |
+
         def urienc: @uri;
+
+        def is_excluded_profile:
+            (.remarks // "" | ascii_downcase) as $r |
+            any($exclude_keywords[]; . as $keyword | $r | contains($keyword));
 
         def xray_outbound_to_url:
             .protocol as $proto |
@@ -168,13 +178,11 @@ subscription_list_servers() {
             end;
 
         def location_key:
-            (.remarks // "" | gsub("\\s+"; " ") | ltrimstr(" ")) as $s |
-            ($s[0:2]) as $flag |
-            ($s[2:] | ltrimstr(" ") | split(" ") | (.[0] // "")) as $word |
-            $flag + " " + $word;
+            (.remarks // "" | split(" ") | map(select(length > 0))) as $tokens |
+            (($tokens[0] // "") + " " + ($tokens[1] // ""));
 
         .[]
-        | select((.remarks // "" | test($exclude; "i")) | not)
+        | select(is_excluded_profile | not)
         | . as $profile
         | (location_key) as $loc
         | ($profile.outbounds[]? | select(.protocol == "vless" or .protocol == "hysteria")) as $ob
@@ -228,6 +236,11 @@ EOF
 # outbound set per location, plus an outer selector across all locations (default = first location's
 # urltest tag), mirroring the existing "urltest" proxy_config_type but with servers grouped by
 # location instead of a single flat list.
+#
+# Callers MUST verify `subscription_list_locations "$section"` is non-empty before calling this -
+# this function is normally invoked as `config="$(sing_box_cf_add_subscription_outbounds ...)"`,
+# i.e. inside a command substitution subshell, where `exit` would only terminate that subshell and
+# not the parent podkop process, silently continuing with a truncated config.
 # Arguments:
 #   config: string (JSON), sing-box configuration to modify
 #   section: string, UCI section name
@@ -288,11 +301,6 @@ EOF
     done << EOF
 $(subscription_list_locations "$section")
 EOF
-
-    if [ -z "$outer_selector_tags" ]; then
-        log "Subscription for section '$section' produced no usable servers. Aborted." "fatal"
-        exit 1
-    fi
 
     local outer_selector_tag
     outer_selector_tag="$(get_outbound_tag_by_section "$section")"
