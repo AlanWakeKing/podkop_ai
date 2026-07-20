@@ -1990,6 +1990,7 @@ function renderDefaultState({
       latencyFetching ? E("div", { class: "skeleton", style: "width: 99px; height: 28px" }) : E(
         "button",
         {
+          type: "button",
           class: "btn dashboard-sections-grid-item-test-latency",
           click: () => testLatency()
         },
@@ -3603,7 +3604,12 @@ function renderButton({
   }
   return E(
     "button",
-    { class: getClass(), disabled: getDisabled(), click: onClick },
+    {
+      type: "button",
+      class: getClass(),
+      disabled: getDisabled(),
+      click: onClick
+    },
     [...insertIf(hasIcon, [getWrappedIcon()]), E("span", {}, text)]
   );
 }
@@ -4963,6 +4969,7 @@ function renderServerList({
           E(
             "button",
             {
+              type: "button",
               class: "cbi-button cbi-button-action",
               disabled: latencyFetching,
               click: () => onTestLatency()
@@ -5289,7 +5296,13 @@ function renderUrlStep({
         type: "text",
         class: "cbi-input-text",
         placeholder: "https://example.com/sub/...",
-        value: url
+        value: url,
+        onkeydown: (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onCheck(input.value.trim());
+          }
+        }
       })
     ]),
     error ? E("div", { class: "pdk_wizard-page__error" }, error) : E("div", {}),
@@ -5299,6 +5312,7 @@ function renderUrlStep({
       E(
         "button",
         {
+          type: "button",
           class: "cbi-button cbi-button-action",
           disabled: loading,
           click: () => onCheck(input.value.trim())
@@ -5345,6 +5359,7 @@ function renderPreviewStep({
       E(
         "button",
         {
+          type: "button",
           class: "cbi-button",
           disabled: applying,
           click: () => onEditUrl()
@@ -5354,6 +5369,7 @@ function renderPreviewStep({
       E(
         "button",
         {
+          type: "button",
           class: "cbi-button cbi-button-action",
           disabled: applying,
           click: () => onConfirm()

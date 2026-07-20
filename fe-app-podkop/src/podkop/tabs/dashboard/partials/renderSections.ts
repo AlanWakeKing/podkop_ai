@@ -102,6 +102,7 @@ export function renderDefaultState({
         : E(
             'button',
             {
+              type: 'button',
               class: 'btn dashboard-sections-grid-item-test-latency',
               click: () => testLatency(),
             },

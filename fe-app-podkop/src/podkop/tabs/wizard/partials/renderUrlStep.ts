@@ -26,6 +26,12 @@ export function renderUrlStep({
         class: 'cbi-input-text',
         placeholder: 'https://example.com/sub/...',
         value: url,
+        onkeydown: (event: KeyboardEvent) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            onCheck(input.value.trim());
+          }
+        },
       }) as HTMLInputElement),
     ]),
     error
@@ -37,6 +43,7 @@ export function renderUrlStep({
       E(
         'button',
         {
+          type: 'button',
           class: 'cbi-button cbi-button-action',
           disabled: loading,
           click: () => onCheck(input.value.trim()),

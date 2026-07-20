@@ -49,6 +49,7 @@ export function renderPreviewStep({
       E(
         'button',
         {
+          type: 'button',
           class: 'cbi-button',
           disabled: applying,
           click: () => onEditUrl(),
@@ -58,6 +59,7 @@ export function renderPreviewStep({
       E(
         'button',
         {
+          type: 'button',
           class: 'cbi-button cbi-button-action',
           disabled: applying,
           click: () => onConfirm(),

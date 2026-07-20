@@ -66,6 +66,7 @@ export function renderServerList({
           E(
             'button',
             {
+              type: 'button',
               class: 'cbi-button cbi-button-action',
               disabled: latencyFetching,
               click: () => onTestLatency(),
