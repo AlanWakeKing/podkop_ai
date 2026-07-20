@@ -15,7 +15,9 @@ export function render() {
         failed: false,
         latencyFetching: false,
         sections: [],
+        expandedLocations: new Set(),
         onTestLatency: () => {},
+        onToggleLocation: () => {},
       }),
     ),
   );

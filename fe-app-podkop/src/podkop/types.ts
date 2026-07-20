@@ -49,6 +49,7 @@ export namespace Podkop {
   // global_check            Run global system check
   // subscription_locations  Get location-name mapping for a subscription proxy section
   // subscription_servers    Get every individual server for a subscription proxy section
+  // subscription_info       Get subscription title/traffic usage/expiry for a subscription section
 
   export enum AvailableMethods {
     CHECK_DNS_AVAILABLE = 'check_dns_available',
@@ -69,6 +70,7 @@ export namespace Podkop {
     GET_SYSTEM_INFO = 'get_system_info',
     SUBSCRIPTION_LOCATIONS = 'subscription_locations',
     SUBSCRIPTION_SERVERS = 'subscription_servers',
+    SUBSCRIPTION_INFO = 'subscription_info',
   }
 
   export enum AvailableClashAPIMethods {
@@ -97,6 +99,14 @@ export namespace Podkop {
     tag: string;
     location_tag: string;
     remarks: string;
+  }
+
+  export interface SubscriptionInfo {
+    title: string;
+    upload: number;
+    download: number;
+    total: number;
+    expire: number;
   }
 
   export interface ConfigProxyUrlTestSection {

@@ -110,6 +110,52 @@ subscription_get_expire_timestamp() {
 }
 
 #######################################
+# Emits a JSON object with the subscription's display title (decoded from the "profile-title" header,
+# which v2rayNG/happ-style subscriptions send as "base64:<...>") and usage/expiry info from the
+# "subscription-userinfo" header (upload/download/total bytes, expire unix timestamp - all 0 when the
+# subscription doesn't report them, e.g. an unlimited plan).
+# Arguments:
+#   section: string, UCI section name
+# Outputs:
+#   JSON object on stdout, e.g. {"title":"VPN24TO7","upload":0,"download":123,"total":0,"expire":0}
+#######################################
+subscription_info_json() {
+    local section="$1"
+
+    local headers_path
+    headers_path="$(subscription_cache_headers_path "$section")"
+    [ -f "$headers_path" ] || { printf '{}'; return; }
+
+    local title_header title
+    title_header="$(grep -i '^ *profile-title:' "$headers_path" | tail -n1 | sed -e 's/^[^:]*: *//' -e 's/\r$//')"
+    title="${title_header#base64:}"
+    if [ -n "$title" ]; then
+        title="$(base64_decode "$title")"
+    fi
+
+    local userinfo_line upload download total expire
+    userinfo_line="$(grep -i '^ *subscription-userinfo:' "$headers_path" | tail -n1)"
+    upload="$(printf '%s' "$userinfo_line" | grep -o 'upload=[0-9]*' | head -n1 | cut -d= -f2)"
+    download="$(printf '%s' "$userinfo_line" | grep -o 'download=[0-9]*' | head -n1 | cut -d= -f2)"
+    total="$(printf '%s' "$userinfo_line" | grep -o 'total=[0-9]*' | head -n1 | cut -d= -f2)"
+    expire="$(printf '%s' "$userinfo_line" | grep -o 'expire=[0-9]*' | head -n1 | cut -d= -f2)"
+
+    jq -n \
+        --arg title "$title" \
+        --arg upload "${upload:-0}" \
+        --arg download "${download:-0}" \
+        --arg total "${total:-0}" \
+        --arg expire "${expire:-0}" \
+        '{
+            title: $title,
+            upload: ($upload | tonumber),
+            download: ($download | tonumber),
+            total: ($total | tonumber),
+            expire: ($expire | tonumber)
+        }'
+}
+
+#######################################
 # Parses the cached subscription JSON into a flat list of proxy servers grouped by location, printed
 # as tab-separated "location_key<TAB>proxy_url" lines (one per usable server).
 #

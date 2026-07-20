@@ -624,6 +624,7 @@ var Podkop;
     AvailableMethods2["GET_SYSTEM_INFO"] = "get_system_info";
     AvailableMethods2["SUBSCRIPTION_LOCATIONS"] = "subscription_locations";
     AvailableMethods2["SUBSCRIPTION_SERVERS"] = "subscription_servers";
+    AvailableMethods2["SUBSCRIPTION_INFO"] = "subscription_info";
   })(AvailableMethods = Podkop2.AvailableMethods || (Podkop2.AvailableMethods = {}));
   let AvailableClashAPIMethods;
   ((AvailableClashAPIMethods2) => {
@@ -705,6 +706,10 @@ var PodkopShellMethods = {
   ),
   getSubscriptionServers: async (section) => callBaseMethod(
     Podkop.AvailableMethods.SUBSCRIPTION_SERVERS,
+    [section]
+  ),
+  getSubscriptionInfo: async (section) => callBaseMethod(
+    Podkop.AvailableMethods.SUBSCRIPTION_INFO,
     [section]
   )
 };
@@ -908,32 +913,69 @@ async function getClashApiSecret() {
 }
 
 // src/podkop/methods/custom/getSubscriptionServersWithLatency.ts
+var LOCATION_SLUG_PATTERN = /-(loc\d+)-urltest-out$/;
 async function getSubscriptionSections() {
   const configSections = await getConfigSections();
   return configSections.filter(
     (section) => section.connection_type === "proxy" && section.proxy_config_type === "subscription"
   );
 }
+async function buildSectionData(section, proxies) {
+  const [serversResponse, locationsResponse, infoResponse] = await Promise.all([
+    PodkopShellMethods.getSubscriptionServers(section[".name"]),
+    PodkopShellMethods.getSubscriptionLocations(section[".name"]),
+    PodkopShellMethods.getSubscriptionInfo(section[".name"])
+  ]);
+  const servers = serversResponse.success ? serversResponse.data : [];
+  const locationNames = locationsResponse.success ? locationsResponse.data : {};
+  const info = infoResponse.success ? infoResponse.data : { title: "", upload: 0, download: 0, total: 0, expire: 0 };
+  const locationsByTag = /* @__PURE__ */ new Map();
+  servers.forEach((server) => {
+    if (!locationsByTag.has(server.location_tag)) {
+      const slug = server.location_tag.match(LOCATION_SLUG_PATTERN)?.[1];
+      locationsByTag.set(server.location_tag, {
+        code: server.location_tag,
+        displayName: slug && locationNames[slug] || server.location_tag,
+        bestLatency: 0,
+        servers: []
+      });
+    }
+    const latency = proxies[server.tag]?.history?.[0]?.delay || 0;
+    locationsByTag.get(server.location_tag).servers.push({
+      code: server.tag,
+      displayName: server.remarks,
+      latency
+    });
+  });
+  const locations = Array.from(locationsByTag.values()).map((location) => {
+    const sortedServers = [...location.servers].sort((a, b) => {
+      if (a.latency === 0 && b.latency === 0) return 0;
+      if (a.latency === 0) return 1;
+      if (b.latency === 0) return -1;
+      return a.latency - b.latency;
+    });
+    return {
+      ...location,
+      servers: sortedServers,
+      bestLatency: sortedServers.find((server) => server.latency > 0)?.latency || 0
+    };
+  });
+  return {
+    code: section[".name"],
+    displayName: section[".name"],
+    info,
+    locations
+  };
+}
 async function getSubscriptionServers() {
   const subscriptionSections = await getSubscriptionSections();
   if (subscriptionSections.length === 0) {
     return { success: true, data: [] };
   }
-  const serversBySection = await Promise.all(
-    subscriptionSections.map(async (section) => {
-      const response = await PodkopShellMethods.getSubscriptionServers(
-        section[".name"]
-      );
-      return {
-        section,
-        servers: response.success ? response.data : []
-      };
-    })
-  );
   const clashProxies = await PodkopShellMethods.getClashApiProxies();
   const proxies = clashProxies.success ? clashProxies.data.proxies : {};
-  const data = serversBySection.map(
-    ({ section, servers }) => buildSectionRows(section, servers, proxies)
+  const data = await Promise.all(
+    subscriptionSections.map((section) => buildSectionData(section, proxies))
   );
   return { success: true, data };
 }
@@ -947,14 +989,11 @@ async function testSubscriptionServersLatency() {
       const response = await PodkopShellMethods.getSubscriptionServers(
         section[".name"]
       );
-      return {
-        section,
-        servers: response.success ? response.data : []
-      };
+      return response.success ? response.data : [];
     })
   );
   const locationTags = /* @__PURE__ */ new Set();
-  serversBySection.forEach(({ servers }) => {
+  serversBySection.forEach((servers) => {
     servers.forEach((server) => locationTags.add(server.location_tag));
   });
   await Promise.all(
@@ -962,33 +1001,7 @@ async function testSubscriptionServersLatency() {
       (tag) => PodkopShellMethods.getClashApiGroupLatency(tag)
     )
   );
-  const clashProxies = await PodkopShellMethods.getClashApiProxies();
-  const proxies = clashProxies.success ? clashProxies.data.proxies : {};
-  const data = serversBySection.map(
-    ({ section, servers }) => buildSectionRows(section, servers, proxies)
-  );
-  return { success: true, data };
-}
-function buildSectionRows(section, servers, proxies) {
-  const rows = servers.map((server) => {
-    const proxy = proxies[server.tag];
-    return {
-      code: server.tag,
-      displayName: server.remarks,
-      latency: proxy?.history?.[0]?.delay || 0,
-      selected: false
-    };
-  }).sort((a, b) => {
-    if (a.latency === 0 && b.latency === 0) return 0;
-    if (a.latency === 0) return 1;
-    if (b.latency === 0) return -1;
-    return a.latency - b.latency;
-  });
-  return {
-    code: section[".name"],
-    displayName: section[".name"],
-    servers: rows
-  };
+  return getSubscriptionServers();
 }
 
 // src/podkop/methods/custom/index.ts
@@ -4798,6 +4811,77 @@ function renderServerRow(server) {
   ]);
 }
 
+// src/podkop/tabs/subscription/partials/renderLocationCard.ts
+function renderLocationCard({
+  location,
+  expanded,
+  onToggle
+}) {
+  return E(
+    "div",
+    {
+      class: `pdk_subscription-page__card ${expanded ? "pdk_subscription-page__card--expanded" : ""}`
+    },
+    [
+      E(
+        "div",
+        {
+          class: "pdk_subscription-page__card__header",
+          click: () => onToggle(location.code)
+        },
+        [
+          E("span", { class: "pdk_subscription-page__card__header__arrow" }, expanded ? "\u25BE" : "\u25B8"),
+          E("b", { class: "pdk_subscription-page__card__header__name" }, location.displayName),
+          E(
+            "span",
+            { class: "pdk_subscription-page__card__header__count" },
+            `${location.servers.length} ${_("servers")}`
+          ),
+          E(
+            "span",
+            {
+              class: `pdk_subscription-page__row__latency ${getLatencyClass(location.bestLatency)}`
+            },
+            location.bestLatency ? `${location.bestLatency}ms` : _("N/A")
+          )
+        ]
+      ),
+      expanded ? E(
+        "div",
+        { class: "pdk_subscription-page__card__body" },
+        location.servers.map(renderServerRow)
+      ) : E("div", {})
+    ]
+  );
+}
+
+// src/podkop/tabs/subscription/partials/renderSubscriptionInfo.ts
+function renderSubscriptionInfo({ info }) {
+  const used = info.upload + info.download;
+  const trafficText = info.total > 0 ? `${prettyBytes(used)} / ${prettyBytes(info.total)}` : `${prettyBytes(used)} (${_("unlimited")})`;
+  const rows = [
+    info.title ? { key: _("Subscription"), value: info.title } : null,
+    { key: _("Traffic used"), value: trafficText },
+    info.expire > 0 ? {
+      key: _("Expires"),
+      value: new Date(info.expire * 1e3).toLocaleDateString()
+    } : null
+  ].filter((row) => row !== null);
+  if (rows.length === 0) {
+    return E("div", {});
+  }
+  return E(
+    "div",
+    { class: "pdk_subscription-page__info" },
+    rows.map(
+      (row) => E("div", { class: "pdk_subscription-page__info__row" }, [
+        E("span", { class: "pdk_subscription-page__info__row__key" }, `${row.key}: `),
+        E("span", { class: "pdk_subscription-page__info__row__value" }, row.value)
+      ])
+    )
+  );
+}
+
 // src/podkop/tabs/subscription/partials/renderServerList.ts
 function renderLoadingState4() {
   return E("div", {
@@ -4824,7 +4908,9 @@ function renderServerList({
   failed,
   latencyFetching,
   sections,
-  onTestLatency
+  expandedLocations: expandedLocations2,
+  onTestLatency,
+  onToggleLocation
 }) {
   if (loading) {
     return renderLoadingState4();
@@ -4835,35 +4921,38 @@ function renderServerList({
   if (sections.length === 0) {
     return renderEmptyState();
   }
-  return E("div", { class: "pdk_subscription-page__wrapper" }, [
-    E(
-      "div",
-      { class: "pdk_subscription-page__header" },
-      E(
-        "button",
-        {
-          class: "cbi-button cbi-button-action",
-          disabled: latencyFetching,
-          click: () => onTestLatency()
-        },
-        latencyFetching ? _("Testing\u2026") : _("Test latency")
-      )
-    ),
-    E(
-      "div",
-      { class: "pdk_subscription-page__sections" },
-      sections.map(
-        (section) => E("div", { class: "pdk_subscription-page__section" }, [
+  return E(
+    "div",
+    { class: "pdk_subscription-page__sections" },
+    sections.map(
+      (section) => E("div", { class: "pdk_subscription-page__section" }, [
+        E("div", { class: "pdk_subscription-page__section__header" }, [
           E("b", { class: "pdk_subscription-page__section__title" }, section.displayName),
           E(
-            "div",
-            { class: "pdk_subscription-page__section__rows" },
-            section.servers.map(renderServerRow)
+            "button",
+            {
+              class: "cbi-button cbi-button-action",
+              disabled: latencyFetching,
+              click: () => onTestLatency()
+            },
+            latencyFetching ? _("Testing\u2026") : _("Test latency")
           )
-        ])
-      )
+        ]),
+        renderSubscriptionInfo({ info: section.info }),
+        E(
+          "div",
+          { class: "pdk_subscription-page__cards" },
+          section.locations.map(
+            (location) => renderLocationCard({
+              location,
+              expanded: expandedLocations2.has(location.code),
+              onToggle: onToggleLocation
+            })
+          )
+        )
+      ])
     )
-  ]);
+  );
 }
 
 // src/podkop/tabs/subscription/render.ts
@@ -4882,7 +4971,10 @@ function render3() {
         failed: false,
         latencyFetching: false,
         sections: [],
+        expandedLocations: /* @__PURE__ */ new Set(),
         onTestLatency: () => {
+        },
+        onToggleLocation: () => {
         }
       })
     )
@@ -4890,6 +4982,7 @@ function render3() {
 }
 
 // src/podkop/tabs/subscription/initController.ts
+var expandedLocations = /* @__PURE__ */ new Set();
 async function fetchSubscriptionServers() {
   store.set({
     subscriptionServersWidget: {
@@ -4934,6 +5027,14 @@ async function handleTestLatency() {
     }
   });
 }
+function handleToggleLocation(code) {
+  if (expandedLocations.has(code)) {
+    expandedLocations.delete(code);
+  } else {
+    expandedLocations.add(code);
+  }
+  renderServersWidget();
+}
 async function renderServersWidget() {
   logger.debug("[SUBSCRIPTION]", "renderServersWidget");
   const widget = store.get().subscriptionServersWidget;
@@ -4943,7 +5044,9 @@ async function renderServersWidget() {
     failed: widget.failed,
     latencyFetching: widget.latencyFetching,
     sections: widget.data,
-    onTestLatency: () => handleTestLatency()
+    expandedLocations,
+    onTestLatency: () => handleTestLatency(),
+    onToggleLocation: (code) => handleToggleLocation(code)
   });
   return preserveScrollForPage(() => {
     container.replaceChildren(renderedWidget);
@@ -4962,6 +5065,7 @@ async function onPageMount3() {
 function onPageUnmount3() {
   store.unsubscribe(onStoreUpdate3);
   store.reset(["subscriptionServersWidget"]);
+  expandedLocations.clear();
 }
 function registerLifecycleListeners3() {
   store.subscribe((next, prev, diff) => {
@@ -5008,16 +5112,10 @@ var styles5 = `
     width: 100%;
 }
 
-.pdk_subscription-page__header {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 10px;
-}
-
 .pdk_subscription-page__sections {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 16px;
     margin-top: 10px;
 }
 
@@ -5027,14 +5125,64 @@ var styles5 = `
     padding: 10px;
 }
 
-.pdk_subscription-page__section__title {
-    display: block;
+.pdk_subscription-page__section__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin-bottom: 6px;
 }
 
-.pdk_subscription-page__section__rows {
+.pdk_subscription-page__section__title {
+    display: block;
+}
+
+.pdk_subscription-page__info {
+    margin-bottom: 10px;
+}
+
+.pdk_subscription-page__info__row {
+    padding: 2px 0;
+}
+
+.pdk_subscription-page__cards {
     display: flex;
     flex-direction: column;
+    gap: 6px;
+}
+
+.pdk_subscription-page__card {
+    border: 1px solid var(--background-color-low, lightgray);
+    border-radius: 4px;
+}
+
+.pdk_subscription-page__card__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.pdk_subscription-page__card__header__arrow {
+    width: 12px;
+    color: var(--color-neutral, gray);
+}
+
+.pdk_subscription-page__card__header__name {
+    flex-grow: 1;
+}
+
+.pdk_subscription-page__card__header__count {
+    color: var(--color-neutral, gray);
+    font-size: 0.9em;
+}
+
+.pdk_subscription-page__card--expanded .pdk_subscription-page__card__header {
+    border-bottom: 1px solid var(--background-color-low, lightgray);
+}
+
+.pdk_subscription-page__card__body {
+    padding: 4px 10px;
 }
 
 .pdk_subscription-page__row {

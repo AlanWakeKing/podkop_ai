@@ -3,6 +3,10 @@ import { CustomPodkopMethods } from '../../methods';
 import { logger, store, StoreType } from '../../services';
 import { renderServerList } from './partials';
 
+// Which location cards are expanded - purely local UI state, doesn't need to survive a re-fetch, so
+// it lives outside the store and is reset on tab unmount.
+const expandedLocations = new Set<string>();
+
 async function fetchSubscriptionServers() {
   store.set({
     subscriptionServersWidget: {
@@ -59,6 +63,16 @@ async function handleTestLatency() {
   });
 }
 
+function handleToggleLocation(code: string) {
+  if (expandedLocations.has(code)) {
+    expandedLocations.delete(code);
+  } else {
+    expandedLocations.add(code);
+  }
+
+  renderServersWidget();
+}
+
 async function renderServersWidget() {
   logger.debug('[SUBSCRIPTION]', 'renderServersWidget');
   const widget = store.get().subscriptionServersWidget;
@@ -69,7 +83,9 @@ async function renderServersWidget() {
     failed: widget.failed,
     latencyFetching: widget.latencyFetching,
     sections: widget.data,
+    expandedLocations,
     onTestLatency: () => handleTestLatency(),
+    onToggleLocation: (code) => handleToggleLocation(code),
   });
 
   return preserveScrollForPage(() => {
@@ -96,6 +112,7 @@ async function onPageMount() {
 function onPageUnmount() {
   store.unsubscribe(onStoreUpdate);
   store.reset(['subscriptionServersWidget']);
+  expandedLocations.clear();
 }
 
 function registerLifecycleListeners() {

@@ -1,6 +1,6 @@
 import { ISubscriptionServerRow } from '../../../methods/custom/getSubscriptionServersWithLatency';
 
-function getLatencyClass(latency: number) {
+export function getLatencyClass(latency: number) {
   if (!latency) {
     return 'pdk_subscription-page__row__latency--empty';
   }
