@@ -174,6 +174,14 @@ export interface StoreType {
     latencyFetching: boolean;
     data: ISubscriptionSectionData[];
   };
+  wizardWidget: {
+    step: 'input' | 'preview' | 'done';
+    url: string;
+    loading: boolean;
+    applying: boolean;
+    error: string;
+    preview: Podkop.SubscriptionPreview | null;
+  };
   diagnosticsRunAction: {
     loading: boolean;
   };
@@ -235,6 +243,14 @@ const initialStore: StoreType = {
     failed: false,
     latencyFetching: false,
     data: [],
+  },
+  wizardWidget: {
+    step: 'input',
+    url: '',
+    loading: false,
+    applying: false,
+    error: '',
+    preview: null,
   },
   ...initialDiagnosticStore,
 };

@@ -1909,6 +1909,34 @@ show_subscription_info() {
     subscription_info_json "$section"
 }
 
+# Fetches and parses a subscription URL into a scratch cache (not tied to any real UCI section), so
+# the wizard can preview a subscription's title/traffic/locations before the user commits to saving
+# it. Never touches the actual podkop configuration or a running section's cache.
+show_subscription_preview() {
+    local url="$1"
+    local preview_section="__wizard_preview__"
+
+    if [ -z "$url" ]; then
+        printf '{"success":false,"error":"missing url"}'
+        return 1
+    fi
+
+    if ! subscription_fetch "$preview_section" "$url"; then
+        printf '{"success":false,"error":"fetch failed"}'
+        return 1
+    fi
+
+    if [ -z "$(subscription_list_locations "$preview_section")" ]; then
+        printf '{"success":false,"error":"no usable servers"}'
+        return 1
+    fi
+
+    jq -n \
+        --argjson locations "$(subscription_locations_json "$preview_section")" \
+        --argjson info "$(subscription_info_json "$preview_section")" \
+        '{success:true, locations:$locations, info:$info}'
+}
+
 show_sing_box_config() {
     local sing_box_config_path
     config_get sing_box_config_path "settings" "config_path"
@@ -2836,6 +2864,9 @@ subscription_servers)
     ;;
 subscription_info)
     show_subscription_info "$2"
+    ;;
+subscription_preview)
+    show_subscription_preview "$2"
     ;;
 check_proxy)
     check_proxy

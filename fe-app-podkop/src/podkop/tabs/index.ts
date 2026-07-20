@@ -1,3 +1,4 @@
 export * from './dashboard';
 export * from './diagnostic';
 export * from './subscription';
+export * from './wizard';

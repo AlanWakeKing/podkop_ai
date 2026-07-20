@@ -5,6 +5,9 @@
 "require network";
 "require view.podkop.main as main";
 
+// Wizard content
+"require view.podkop.wizard as wizard";
+
 // Settings content
 "require view.podkop.settings as settings";
 
@@ -31,6 +34,21 @@ const EntryPoint = {
     );
     // Enable tab views
     podkopMap.tabbed = true;
+
+    // Wizard tab
+    const wizardSection = podkopMap.section(
+      form.TypedSection,
+      "wizard",
+      _("Wizard"),
+    );
+    wizardSection.anonymous = true;
+    wizardSection.addremove = false;
+    wizardSection.cfgsections = function () {
+      return ["wizard"];
+    };
+
+    // Render wizard content
+    wizard.createWizardContent(wizardSection);
 
     // Sections tab
     const sectionsSection = podkopMap.section(

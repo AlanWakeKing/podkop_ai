@@ -1,11 +1,12 @@
 // language=CSS
-import { DashboardTab, DiagnosticTab, SubscriptionTab } from './podkop';
+import { DashboardTab, DiagnosticTab, SubscriptionTab, WizardTab } from './podkop';
 import { PartialStyles } from './partials';
 
 export const GlobalStyles = `
 ${DashboardTab.styles}
 ${DiagnosticTab.styles}
 ${SubscriptionTab.styles}
+${WizardTab.styles}
 ${PartialStyles}
 
 

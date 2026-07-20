@@ -99,4 +99,9 @@ export const PodkopShellMethods = {
       Podkop.AvailableMethods.SUBSCRIPTION_INFO,
       [section],
     ),
+  getSubscriptionPreview: async (url: string) =>
+    callBaseMethod<Podkop.SubscriptionPreview>(
+      Podkop.AvailableMethods.SUBSCRIPTION_PREVIEW,
+      [url],
+    ),
 };

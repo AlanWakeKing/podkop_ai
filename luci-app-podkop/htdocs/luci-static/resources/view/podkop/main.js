@@ -625,6 +625,7 @@ var Podkop;
     AvailableMethods2["SUBSCRIPTION_LOCATIONS"] = "subscription_locations";
     AvailableMethods2["SUBSCRIPTION_SERVERS"] = "subscription_servers";
     AvailableMethods2["SUBSCRIPTION_INFO"] = "subscription_info";
+    AvailableMethods2["SUBSCRIPTION_PREVIEW"] = "subscription_preview";
   })(AvailableMethods = Podkop2.AvailableMethods || (Podkop2.AvailableMethods = {}));
   let AvailableClashAPIMethods;
   ((AvailableClashAPIMethods2) => {
@@ -711,6 +712,10 @@ var PodkopShellMethods = {
   getSubscriptionInfo: async (section) => callBaseMethod(
     Podkop.AvailableMethods.SUBSCRIPTION_INFO,
     [section]
+  ),
+  getSubscriptionPreview: async (url) => callBaseMethod(
+    Podkop.AvailableMethods.SUBSCRIPTION_PREVIEW,
+    [url]
   )
 };
 
@@ -1004,13 +1009,32 @@ async function testSubscriptionServersLatency() {
   return getSubscriptionServers();
 }
 
+// src/podkop/methods/custom/applySubscriptionSetup.ts
+var WIZARD_SECTION_NAME = "main";
+async function applySubscriptionSetup(url) {
+  await uci.load("podkop");
+  const sections = await getConfigSections();
+  const existing = sections.find(
+    (section) => section[".name"] === WIZARD_SECTION_NAME
+  );
+  const sectionName = existing ? WIZARD_SECTION_NAME : uci.add("podkop", "section", WIZARD_SECTION_NAME);
+  uci.set("podkop", sectionName, "connection_type", "proxy");
+  uci.set("podkop", sectionName, "proxy_config_type", "subscription");
+  uci.set("podkop", sectionName, "subscription_url", url);
+  await uci.save();
+  await uci.apply();
+  const restartResponse = await PodkopShellMethods.restart();
+  return { success: restartResponse.success };
+}
+
 // src/podkop/methods/custom/index.ts
 var CustomPodkopMethods = {
   getConfigSections,
   getDashboardSections,
   getClashApiSecret,
   getSubscriptionServers,
-  testSubscriptionServersLatency
+  testSubscriptionServersLatency,
+  applySubscriptionSetup
 };
 
 // src/constants.ts
@@ -1542,6 +1566,14 @@ var initialStore = {
     failed: false,
     latencyFetching: false,
     data: []
+  },
+  wizardWidget: {
+    step: "input",
+    url: "",
+    loading: false,
+    applying: false,
+    error: "",
+    preview: null
   },
   ...initialDiagnosticStore
 };
@@ -5225,11 +5257,350 @@ var SubscriptionTab = {
   styles: styles5
 };
 
+// src/podkop/tabs/wizard/render.ts
+function render4() {
+  return E(
+    "div",
+    {
+      id: "wizard-status",
+      class: "pdk_wizard-page"
+    },
+    E("div", { id: "wizard-content" })
+  );
+}
+
+// src/podkop/tabs/wizard/partials/renderUrlStep.ts
+function renderUrlStep({
+  url,
+  loading,
+  error,
+  onCheck
+}) {
+  let input;
+  return E("div", { class: "pdk_wizard-page__step" }, [
+    E("h4", {}, _("Set up your VPN")),
+    E(
+      "p",
+      { class: "pdk_wizard-page__hint" },
+      _("Paste the subscription link your VPN provider gave you.")
+    ),
+    E("div", { class: "pdk_wizard-page__field" }, [
+      input = E("input", {
+        type: "text",
+        class: "cbi-input-text",
+        placeholder: "https://example.com/sub/...",
+        value: url
+      })
+    ]),
+    error ? E("div", { class: "pdk_wizard-page__error" }, error) : E("div", {}),
+    E(
+      "div",
+      { class: "pdk_wizard-page__actions" },
+      E(
+        "button",
+        {
+          class: "cbi-button cbi-button-action",
+          disabled: loading,
+          click: () => onCheck(input.value.trim())
+        },
+        loading ? _("Checking\u2026") : _("Continue")
+      )
+    )
+  ]);
+}
+
+// src/podkop/tabs/wizard/partials/renderPreviewStep.ts
+function renderPreviewStep({
+  preview,
+  applying,
+  onConfirm,
+  onEditUrl
+}) {
+  const locations = Object.values(preview.locations || {});
+  const info = preview.info;
+  const used = (info?.upload || 0) + (info?.download || 0);
+  const trafficText = info && info.total > 0 ? `${prettyBytes(used)} / ${prettyBytes(info.total)}` : `${prettyBytes(used)} (${_("unlimited")})`;
+  return E("div", { class: "pdk_wizard-page__step" }, [
+    E("h4", {}, _("This subscription looks good")),
+    info?.title ? E("div", { class: "pdk_wizard-page__preview-row" }, [
+      E("span", {}, `${_("Subscription")}: `),
+      E("b", {}, info.title)
+    ]) : E("div", {}),
+    E("div", { class: "pdk_wizard-page__preview-row" }, [
+      E("span", {}, `${_("Traffic used")}: `),
+      E("b", {}, trafficText)
+    ]),
+    E("div", { class: "pdk_wizard-page__preview-row" }, [
+      E("span", {}, `${_("Locations found")}: `),
+      E("b", {}, String(locations.length))
+    ]),
+    E(
+      "div",
+      { class: "pdk_wizard-page__chips" },
+      locations.map(
+        (name) => E("span", { class: "pdk_wizard-page__chip" }, name)
+      )
+    ),
+    E("div", { class: "pdk_wizard-page__actions" }, [
+      E(
+        "button",
+        {
+          class: "cbi-button",
+          disabled: applying,
+          click: () => onEditUrl()
+        },
+        _("Change link")
+      ),
+      E(
+        "button",
+        {
+          class: "cbi-button cbi-button-action",
+          disabled: applying,
+          click: () => onConfirm()
+        },
+        applying ? _("Setting up\u2026") : _("Set up and start")
+      )
+    ])
+  ]);
+}
+
+// src/podkop/tabs/wizard/partials/renderDoneStep.ts
+function renderDoneStep() {
+  return E("div", { class: "pdk_wizard-page__step" }, [
+    E("h4", {}, _("All set!")),
+    E(
+      "p",
+      { class: "pdk_wizard-page__hint" },
+      _(
+        "Podkop is configured and starting up. Check the Subscription tab to see your servers, or Dashboard for live status."
+      )
+    )
+  ]);
+}
+
+// src/podkop/tabs/wizard/initController.ts
+async function handleCheckUrl(url) {
+  if (!url) {
+    store.set({
+      wizardWidget: {
+        ...store.get().wizardWidget,
+        error: _("Please paste a subscription link first")
+      }
+    });
+    return;
+  }
+  store.set({
+    wizardWidget: {
+      ...store.get().wizardWidget,
+      url,
+      loading: true,
+      error: ""
+    }
+  });
+  const response = await PodkopShellMethods.getSubscriptionPreview(url);
+  const preview = response.success ? response.data : null;
+  if (!preview || !preview.success) {
+    logger.error("[WIZARD]", "handleCheckUrl: preview failed", preview);
+    store.set({
+      wizardWidget: {
+        ...store.get().wizardWidget,
+        loading: false,
+        error: _(
+          "Could not read this subscription link. Double-check it and try again."
+        )
+      }
+    });
+    return;
+  }
+  store.set({
+    wizardWidget: {
+      ...store.get().wizardWidget,
+      step: "preview",
+      loading: false,
+      error: "",
+      preview
+    }
+  });
+}
+function handleEditUrl() {
+  store.set({
+    wizardWidget: {
+      ...store.get().wizardWidget,
+      step: "input",
+      error: "",
+      preview: null
+    }
+  });
+}
+async function handleConfirm() {
+  const { url } = store.get().wizardWidget;
+  store.set({
+    wizardWidget: {
+      ...store.get().wizardWidget,
+      applying: true
+    }
+  });
+  const { success } = await CustomPodkopMethods.applySubscriptionSetup(url);
+  if (!success) {
+    logger.error("[WIZARD]", "handleConfirm: apply failed");
+    store.set({
+      wizardWidget: {
+        ...store.get().wizardWidget,
+        applying: false,
+        error: _("Something went wrong while starting podkop.")
+      }
+    });
+    return;
+  }
+  store.set({
+    wizardWidget: {
+      ...store.get().wizardWidget,
+      step: "done",
+      applying: false
+    }
+  });
+}
+async function renderWizardWidget() {
+  logger.debug("[WIZARD]", "renderWizardWidget");
+  const widget = store.get().wizardWidget;
+  const container = document.getElementById("wizard-content");
+  let rendered;
+  if (widget.step === "preview" && widget.preview) {
+    rendered = renderPreviewStep({
+      preview: widget.preview,
+      applying: widget.applying,
+      onConfirm: () => handleConfirm(),
+      onEditUrl: () => handleEditUrl()
+    });
+  } else if (widget.step === "done") {
+    rendered = renderDoneStep();
+  } else {
+    rendered = renderUrlStep({
+      url: widget.url,
+      loading: widget.loading,
+      error: widget.error,
+      onCheck: (url) => handleCheckUrl(url)
+    });
+  }
+  container.replaceChildren(rendered);
+}
+async function onStoreUpdate4(next, prev, diff) {
+  if (diff.wizardWidget) {
+    renderWizardWidget();
+  }
+}
+async function onPageMount4() {
+  onPageUnmount4();
+  store.subscribe(onStoreUpdate4);
+  renderWizardWidget();
+}
+function onPageUnmount4() {
+  store.unsubscribe(onStoreUpdate4);
+  store.reset(["wizardWidget"]);
+}
+function registerLifecycleListeners4() {
+  store.subscribe((next, prev, diff) => {
+    if (diff.tabService && next.tabService.current !== prev.tabService.current) {
+      const isWizardVisible = next.tabService.current === "wizard";
+      if (isWizardVisible) {
+        logger.debug("[WIZARD]", "registerLifecycleListeners", "onPageMount");
+        return onPageMount4();
+      }
+      if (!isWizardVisible) {
+        logger.debug(
+          "[WIZARD]",
+          "registerLifecycleListeners",
+          "onPageUnmount"
+        );
+        return onPageUnmount4();
+      }
+    }
+  });
+}
+async function initController4() {
+  onMount("wizard-status").then(() => {
+    logger.debug("[WIZARD]", "initController", "onMount");
+    onPageMount4();
+    registerLifecycleListeners4();
+  });
+}
+
+// src/podkop/tabs/wizard/styles.ts
+var styles6 = `
+#cbi-podkop-wizard-_mount_node > div {
+    width: 100%;
+}
+
+#cbi-podkop-wizard > h3 {
+    display: none;
+}
+
+.pdk_wizard-page {
+    width: 100%;
+    max-width: 480px;
+}
+
+.pdk_wizard-page__step h4 {
+    margin: 10px 0 4px;
+}
+
+.pdk_wizard-page__hint {
+    color: var(--color-neutral, gray);
+    margin-bottom: 14px;
+}
+
+.pdk_wizard-page__field {
+    margin-bottom: 10px;
+}
+
+.pdk_wizard-page__field .cbi-input-text {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.pdk_wizard-page__error {
+    color: var(--error-color-medium, red);
+    margin-bottom: 10px;
+}
+
+.pdk_wizard-page__actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.pdk_wizard-page__preview-row {
+    padding: 3px 0;
+}
+
+.pdk_wizard-page__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 10px 0;
+}
+
+.pdk_wizard-page__chip {
+    border: 1px solid var(--background-color-low, lightgray);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 0.9em;
+}
+`;
+
+// src/podkop/tabs/wizard/index.ts
+var WizardTab = {
+  render: render4,
+  initController: initController4,
+  styles: styles6
+};
+
 // src/styles.ts
 var GlobalStyles = `
 ${DashboardTab.styles}
 ${DiagnosticTab.styles}
 ${SubscriptionTab.styles}
+${WizardTab.styles}
 ${PartialStyles}
 
 
@@ -5503,6 +5874,7 @@ return baseclass.extend({
   TabService,
   TabServiceInstance,
   UPDATE_INTERVAL_OPTIONS,
+  WizardTab,
   bulkValidate,
   coreService,
   executeShellCommand,

@@ -5,6 +5,7 @@ import {
   getSubscriptionServers,
   testSubscriptionServersLatency,
 } from './getSubscriptionServersWithLatency';
+import { applySubscriptionSetup } from './applySubscriptionSetup';
 
 export const CustomPodkopMethods = {
   getConfigSections,
@@ -12,4 +13,5 @@ export const CustomPodkopMethods = {
   getClashApiSecret,
   getSubscriptionServers,
   testSubscriptionServersLatency,
+  applySubscriptionSetup,
 };

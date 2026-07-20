@@ -50,6 +50,7 @@ export namespace Podkop {
   // subscription_locations  Get location-name mapping for a subscription proxy section
   // subscription_servers    Get every individual server for a subscription proxy section
   // subscription_info       Get subscription title/traffic usage/expiry for a subscription section
+  // subscription_preview    Fetch and preview a subscription URL without saving it
 
   export enum AvailableMethods {
     CHECK_DNS_AVAILABLE = 'check_dns_available',
@@ -71,6 +72,7 @@ export namespace Podkop {
     SUBSCRIPTION_LOCATIONS = 'subscription_locations',
     SUBSCRIPTION_SERVERS = 'subscription_servers',
     SUBSCRIPTION_INFO = 'subscription_info',
+    SUBSCRIPTION_PREVIEW = 'subscription_preview',
   }
 
   export enum AvailableClashAPIMethods {
@@ -107,6 +109,13 @@ export namespace Podkop {
     download: number;
     total: number;
     expire: number;
+  }
+
+  export interface SubscriptionPreview {
+    success: boolean;
+    error?: string;
+    locations?: Record<string, string>;
+    info?: SubscriptionInfo;
   }
 
   export interface ConfigProxyUrlTestSection {
