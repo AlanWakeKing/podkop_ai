@@ -17,6 +17,9 @@
 // Diagnostic content
 "require view.podkop.diagnostic as diagnostic";
 
+// Subscription content
+"require view.podkop.subscription as subscription";
+
 const EntryPoint = {
   async render() {
     main.injectGlobalStyles();
@@ -72,6 +75,21 @@ const EntryPoint = {
 
     // Render diagnostic content
     diagnostic.createDiagnosticContent(diagnosticSection);
+
+    // Subscription tab
+    const subscriptionSection = podkopMap.section(
+      form.TypedSection,
+      "subscription",
+      _("Subscription"),
+    );
+    subscriptionSection.anonymous = true;
+    subscriptionSection.addremove = false;
+    subscriptionSection.cfgsections = function () {
+      return ["subscription"];
+    };
+
+    // Render subscription content
+    subscription.createSubscriptionContent(subscriptionSection);
 
     // Dashboard tab
     const dashboardSection = podkopMap.section(

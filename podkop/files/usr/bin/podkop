@@ -1897,6 +1897,12 @@ show_subscription_locations() {
     subscription_locations_json "$section"
 }
 
+show_subscription_servers() {
+    local section="$1"
+
+    subscription_servers_json "$section"
+}
+
 show_sing_box_config() {
     local sing_box_config_path
     config_get sing_box_config_path "settings" "config_path"
@@ -2818,6 +2824,9 @@ subscription_update)
     ;;
 subscription_locations)
     show_subscription_locations "$2"
+    ;;
+subscription_servers)
+    show_subscription_servers "$2"
     ;;
 check_proxy)
     check_proxy

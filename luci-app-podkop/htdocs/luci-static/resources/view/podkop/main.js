@@ -623,6 +623,7 @@ var Podkop;
     AvailableMethods2["CHECK_LOGS"] = "check_logs";
     AvailableMethods2["GET_SYSTEM_INFO"] = "get_system_info";
     AvailableMethods2["SUBSCRIPTION_LOCATIONS"] = "subscription_locations";
+    AvailableMethods2["SUBSCRIPTION_SERVERS"] = "subscription_servers";
   })(AvailableMethods = Podkop2.AvailableMethods || (Podkop2.AvailableMethods = {}));
   let AvailableClashAPIMethods;
   ((AvailableClashAPIMethods2) => {
@@ -700,6 +701,10 @@ var PodkopShellMethods = {
   ),
   getSubscriptionLocations: async (section) => callBaseMethod(
     Podkop.AvailableMethods.SUBSCRIPTION_LOCATIONS,
+    [section]
+  ),
+  getSubscriptionServers: async (section) => callBaseMethod(
+    Podkop.AvailableMethods.SUBSCRIPTION_SERVERS,
     [section]
   )
 };
@@ -902,11 +907,67 @@ async function getClashApiSecret() {
   return settings?.yacd_secret_key || "";
 }
 
+// src/podkop/methods/custom/getSubscriptionServersWithLatency.ts
+async function getSubscriptionServersWithLatency() {
+  const configSections = await getConfigSections();
+  const subscriptionSections = configSections.filter(
+    (section) => section.connection_type === "proxy" && section.proxy_config_type === "subscription"
+  );
+  if (subscriptionSections.length === 0) {
+    return { success: true, data: [] };
+  }
+  const serversBySection = await Promise.all(
+    subscriptionSections.map(async (section) => {
+      const response = await PodkopShellMethods.getSubscriptionServers(
+        section[".name"]
+      );
+      return {
+        section,
+        servers: response.success ? response.data : []
+      };
+    })
+  );
+  const locationTags = /* @__PURE__ */ new Set();
+  serversBySection.forEach(({ servers }) => {
+    servers.forEach((server) => locationTags.add(server.location_tag));
+  });
+  await Promise.all(
+    Array.from(locationTags).map(
+      (tag) => PodkopShellMethods.getClashApiGroupLatency(tag)
+    )
+  );
+  const clashProxies = await PodkopShellMethods.getClashApiProxies();
+  const proxies = clashProxies.success ? clashProxies.data.proxies : {};
+  const data = serversBySection.map(({ section, servers }) => {
+    const rows = servers.map((server) => {
+      const proxy = proxies[server.tag];
+      return {
+        code: server.tag,
+        displayName: server.remarks,
+        latency: proxy?.history?.[0]?.delay || 0,
+        selected: false
+      };
+    }).sort((a, b) => {
+      if (a.latency === 0 && b.latency === 0) return 0;
+      if (a.latency === 0) return 1;
+      if (b.latency === 0) return -1;
+      return a.latency - b.latency;
+    });
+    return {
+      code: section[".name"],
+      displayName: section[".name"],
+      servers: rows
+    };
+  });
+  return { success: true, data };
+}
+
 // src/podkop/methods/custom/index.ts
 var CustomPodkopMethods = {
   getConfigSections,
   getDashboardSections,
-  getClashApiSecret
+  getClashApiSecret,
+  getSubscriptionServersWithLatency
 };
 
 // src/constants.ts
@@ -1433,6 +1494,11 @@ var initialStore = {
     latencyFetching: false,
     data: []
   },
+  subscriptionServersWidget: {
+    loading: true,
+    failed: false,
+    data: []
+  },
   ...initialDiagnosticStore
 };
 var store = new StoreService(initialStore);
@@ -1800,7 +1866,7 @@ function renderDefaultState({
     }
   }
   function renderOutbound(outbound) {
-    function getLatencyClass() {
+    function getLatencyClass2() {
       if (!outbound.latency) {
         return "pdk_dashboard-page__outbound-grid__item__latency--empty";
       }
@@ -1828,7 +1894,7 @@ function renderDefaultState({
           ),
           E(
             "div",
-            { class: getLatencyClass() },
+            { class: getLatencyClass2() },
             outbound.latency ? `${outbound.latency}ms` : "N/A"
           )
         ])
@@ -4677,10 +4743,261 @@ var DiagnosticTab = {
   styles: styles4
 };
 
+// src/podkop/tabs/subscription/partials/renderServerRow.ts
+function getLatencyClass(latency) {
+  if (!latency) {
+    return "pdk_subscription-page__row__latency--empty";
+  }
+  if (latency < 800) {
+    return "pdk_subscription-page__row__latency--green";
+  }
+  if (latency < 1500) {
+    return "pdk_subscription-page__row__latency--yellow";
+  }
+  return "pdk_subscription-page__row__latency--red";
+}
+function renderServerRow(server) {
+  return E("div", { class: "pdk_subscription-page__row" }, [
+    E("span", { class: "pdk_subscription-page__row__name" }, server.displayName),
+    E(
+      "span",
+      { class: `pdk_subscription-page__row__latency ${getLatencyClass(server.latency)}` },
+      server.latency ? `${server.latency}ms` : _("N/A")
+    )
+  ]);
+}
+
+// src/podkop/tabs/subscription/partials/renderServerList.ts
+function renderLoadingState4() {
+  return E("div", {
+    class: "pdk_subscription-page__section skeleton",
+    style: "height: 200px"
+  });
+}
+function renderFailedState3() {
+  return E(
+    "div",
+    { class: "pdk_subscription-page__section centered", style: "height: 200px" },
+    _("Currently unavailable")
+  );
+}
+function renderEmptyState() {
+  return E(
+    "div",
+    { class: "pdk_subscription-page__section centered", style: "height: 200px" },
+    _("No subscription-based sections configured")
+  );
+}
+function renderServerList({
+  loading,
+  failed,
+  sections
+}) {
+  if (loading) {
+    return renderLoadingState4();
+  }
+  if (failed) {
+    return renderFailedState3();
+  }
+  if (sections.length === 0) {
+    return renderEmptyState();
+  }
+  return E(
+    "div",
+    { class: "pdk_subscription-page__sections" },
+    sections.map(
+      (section) => E("div", { class: "pdk_subscription-page__section" }, [
+        E("b", { class: "pdk_subscription-page__section__title" }, section.displayName),
+        E(
+          "div",
+          { class: "pdk_subscription-page__section__rows" },
+          section.servers.map(renderServerRow)
+        )
+      ])
+    )
+  );
+}
+
+// src/podkop/tabs/subscription/render.ts
+function render3() {
+  return E(
+    "div",
+    {
+      id: "subscription-status",
+      class: "pdk_subscription-page"
+    },
+    E(
+      "div",
+      { id: "subscription-servers-list" },
+      renderServerList({ loading: true, failed: false, sections: [] })
+    )
+  );
+}
+
+// src/podkop/tabs/subscription/initController.ts
+async function fetchSubscriptionServers() {
+  store.set({
+    subscriptionServersWidget: {
+      ...store.get().subscriptionServersWidget,
+      loading: true,
+      failed: false
+    }
+  });
+  const { data, success } = await CustomPodkopMethods.getSubscriptionServersWithLatency();
+  if (!success) {
+    logger.error(
+      "[SUBSCRIPTION]",
+      "fetchSubscriptionServers: failed to fetch"
+    );
+  }
+  store.set({
+    subscriptionServersWidget: {
+      loading: false,
+      failed: !success,
+      data
+    }
+  });
+}
+async function renderServersWidget() {
+  logger.debug("[SUBSCRIPTION]", "renderServersWidget");
+  const widget = store.get().subscriptionServersWidget;
+  const container = document.getElementById("subscription-servers-list");
+  const renderedWidget = renderServerList({
+    loading: widget.loading,
+    failed: widget.failed,
+    sections: widget.data
+  });
+  return preserveScrollForPage(() => {
+    container.replaceChildren(renderedWidget);
+  });
+}
+async function onStoreUpdate3(next, prev, diff) {
+  if (diff.subscriptionServersWidget) {
+    renderServersWidget();
+  }
+}
+async function onPageMount3() {
+  onPageUnmount3();
+  store.subscribe(onStoreUpdate3);
+  await fetchSubscriptionServers();
+}
+function onPageUnmount3() {
+  store.unsubscribe(onStoreUpdate3);
+  store.reset(["subscriptionServersWidget"]);
+}
+function registerLifecycleListeners3() {
+  store.subscribe((next, prev, diff) => {
+    if (diff.tabService && next.tabService.current !== prev.tabService.current) {
+      const isSubscriptionVisible = next.tabService.current === "subscription";
+      if (isSubscriptionVisible) {
+        logger.debug(
+          "[SUBSCRIPTION]",
+          "registerLifecycleListeners",
+          "onPageMount"
+        );
+        return onPageMount3();
+      }
+      if (!isSubscriptionVisible) {
+        logger.debug(
+          "[SUBSCRIPTION]",
+          "registerLifecycleListeners",
+          "onPageUnmount"
+        );
+        return onPageUnmount3();
+      }
+    }
+  });
+}
+async function initController3() {
+  onMount("subscription-status").then(() => {
+    logger.debug("[SUBSCRIPTION]", "initController", "onMount");
+    onPageMount3();
+    registerLifecycleListeners3();
+  });
+}
+
+// src/podkop/tabs/subscription/styles.ts
+var styles5 = `
+#cbi-podkop-subscription-_mount_node > div {
+    width: 100%;
+}
+
+#cbi-podkop-subscription > h3 {
+    display: none;
+}
+
+.pdk_subscription-page {
+    width: 100%;
+}
+
+.pdk_subscription-page__sections {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.pdk_subscription-page__section {
+    border: 2px var(--background-color-low, lightgray) solid;
+    border-radius: 4px;
+    padding: 10px;
+}
+
+.pdk_subscription-page__section__title {
+    display: block;
+    margin-bottom: 6px;
+}
+
+.pdk_subscription-page__section__rows {
+    display: flex;
+    flex-direction: column;
+}
+
+.pdk_subscription-page__row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 4px;
+    border-bottom: 1px solid var(--background-color-low, lightgray);
+}
+
+.pdk_subscription-page__row:last-child {
+    border-bottom: none;
+}
+
+.pdk_subscription-page__row__latency {
+    font-variant-numeric: tabular-nums;
+}
+
+.pdk_subscription-page__row__latency--empty {
+    color: var(--color-neutral, gray);
+}
+
+.pdk_subscription-page__row__latency--green {
+    color: var(--success-color-medium, green);
+}
+
+.pdk_subscription-page__row__latency--yellow {
+    color: var(--warning-color-medium, orange);
+}
+
+.pdk_subscription-page__row__latency--red {
+    color: var(--error-color-medium, red);
+}
+`;
+
+// src/podkop/tabs/subscription/index.ts
+var SubscriptionTab = {
+  render: render3,
+  initController: initController3,
+  styles: styles5
+};
+
 // src/styles.ts
 var GlobalStyles = `
 ${DashboardTab.styles}
 ${DiagnosticTab.styles}
+${SubscriptionTab.styles}
 ${PartialStyles}
 
 
@@ -4950,6 +5267,7 @@ return baseclass.extend({
   REGIONAL_OPTIONS,
   RemoteFakeIPMethods,
   STATUS_COLORS,
+  SubscriptionTab,
   TabService,
   TabServiceInstance,
   UPDATE_INTERVAL_OPTIONS,

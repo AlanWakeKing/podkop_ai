@@ -1,5 +1,6 @@
 import { Podkop } from '../types';
 import { initialDiagnosticStore } from '../tabs/diagnostic/diagnostic.store';
+import { ISubscriptionSectionRows } from '../methods/custom/getSubscriptionServersWithLatency';
 
 function jsonStableStringify<T, V>(obj: T): string {
   return JSON.stringify(obj, (_, value) => {
@@ -167,6 +168,11 @@ export interface StoreType {
     data: Podkop.OutboundGroup[];
     latencyFetching: boolean;
   };
+  subscriptionServersWidget: {
+    loading: boolean;
+    failed: boolean;
+    data: ISubscriptionSectionRows[];
+  };
   diagnosticsRunAction: {
     loading: boolean;
   };
@@ -221,6 +227,11 @@ const initialStore: StoreType = {
     loading: true,
     failed: false,
     latencyFetching: false,
+    data: [],
+  },
+  subscriptionServersWidget: {
+    loading: true,
+    failed: false,
     data: [],
   },
   ...initialDiagnosticStore,

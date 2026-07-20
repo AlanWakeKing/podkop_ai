@@ -124,7 +124,7 @@ subscription_get_expire_timestamp() {
 # Arguments:
 #   section: string, UCI section name
 # Outputs:
-#   Tab-separated "location_key<TAB>url" lines on stdout
+#   Tab-separated "location_key<TAB>url<TAB>remarks" lines on stdout
 #######################################
 subscription_list_servers() {
     local section="$1"
@@ -188,7 +188,7 @@ subscription_list_servers() {
         | ($profile.outbounds[]? | select(.protocol == "vless" or .protocol == "hysteria")) as $ob
         | ($ob | xray_outbound_to_url) as $url
         | select($url != null and $url != "")
-        | [$loc, $url]
+        | [$loc, $url, ($profile.remarks // "")]
         | @tsv
     ' "$json_path"
 }
@@ -269,7 +269,8 @@ sing_box_cf_add_subscription_outbounds() {
 
         server_index=0
         location_outbound_tags=""
-        while IFS=$'\t' read -r server_location server_url; do
+        # shellcheck disable=SC2034 # server_remarks is unused here, only needed by subscription_servers_json
+        while IFS=$'\t' read -r server_location server_url server_remarks; do
             [ "$server_location" = "$location" ] || continue
             server_index=$((server_index + 1))
             local server_section="$section-$location_slug-$server_index"
@@ -308,4 +309,56 @@ EOF
         "$(comma_string_to_json_array "$outer_selector_tags")" "$default_outbound")"
 
     echo "$config"
+}
+
+#######################################
+# Emits a JSON array describing every individual server sing_box_cf_add_subscription_outbounds would
+# build outbounds for, as {"tag": "...", "location_tag": "...", "remarks": "..."} objects - lets the
+# UI list all servers (not just one entry per location) alongside their Clash API latency.
+#
+# The tag-assignment logic here (location index -> "locN", server index within location -> "locN-M")
+# must stay in sync with sing_box_cf_add_subscription_outbounds, since it produces the exact same tags.
+# Arguments:
+#   section: string, UCI section name
+# Outputs:
+#   JSON array on stdout
+#######################################
+subscription_servers_json() {
+    local section="$1"
+
+    local location location_index server_index server_location server_url server_remarks first
+    first=1
+    location_index=0
+
+    printf '['
+    while IFS= read -r location; do
+        [ -z "$location" ] && continue
+        location_index=$((location_index + 1))
+        local location_slug="loc$location_index"
+        local location_urltest_tag
+        location_urltest_tag="$(get_outbound_tag_by_section "$section-$location_slug-urltest")"
+
+        server_index=0
+        while IFS=$'\t' read -r server_location server_url server_remarks; do
+            [ "$server_location" = "$location" ] || continue
+            server_index=$((server_index + 1))
+            local server_tag
+            server_tag="$(get_outbound_tag_by_section "$section-$location_slug-$server_index")"
+
+            if [ "$first" -eq 1 ]; then
+                first=0
+            else
+                printf ','
+            fi
+            printf '{"tag":%s,"location_tag":%s,"remarks":%s}' \
+                "$(printf '%s' "$server_tag" | jq -R .)" \
+                "$(printf '%s' "$location_urltest_tag" | jq -R .)" \
+                "$(printf '%s' "$server_remarks" | jq -R .)"
+        done << EOF
+$(subscription_list_servers "$section")
+EOF
+    done << EOF
+$(subscription_list_locations "$section")
+EOF
+    printf ']'
 }

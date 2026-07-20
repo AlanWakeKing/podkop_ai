@@ -89,4 +89,9 @@ export const PodkopShellMethods = {
       Podkop.AvailableMethods.SUBSCRIPTION_LOCATIONS,
       [section],
     ),
+  getSubscriptionServers: async (section: string) =>
+    callBaseMethod<Podkop.SubscriptionServer[]>(
+      Podkop.AvailableMethods.SUBSCRIPTION_SERVERS,
+      [section],
+    ),
 };
