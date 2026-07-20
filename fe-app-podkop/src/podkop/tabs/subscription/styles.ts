@@ -12,6 +12,12 @@ export const styles = `
     width: 100%;
 }
 
+.pdk_subscription-page__header {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
 .pdk_subscription-page__sections {
     display: flex;
     flex-direction: column;

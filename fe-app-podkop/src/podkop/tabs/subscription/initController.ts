@@ -12,8 +12,7 @@ async function fetchSubscriptionServers() {
     },
   });
 
-  const { data, success } =
-    await CustomPodkopMethods.getSubscriptionServersWithLatency();
+  const { data, success } = await CustomPodkopMethods.getSubscriptionServers();
 
   if (!success) {
     logger.error(
@@ -24,8 +23,37 @@ async function fetchSubscriptionServers() {
 
   store.set({
     subscriptionServersWidget: {
+      ...store.get().subscriptionServersWidget,
       loading: false,
       failed: !success,
+      data,
+    },
+  });
+}
+
+// Only ever called from an explicit user action (the "Test latency" button) - this triggers real
+// network probes on the router (one per location) that can take a while and noticeably slow the
+// router down for other unrelated requests, so it must never run automatically on mount.
+async function handleTestLatency() {
+  store.set({
+    subscriptionServersWidget: {
+      ...store.get().subscriptionServersWidget,
+      latencyFetching: true,
+    },
+  });
+
+  const { data, success } =
+    await CustomPodkopMethods.testSubscriptionServersLatency();
+
+  if (!success) {
+    logger.error('[SUBSCRIPTION]', 'handleTestLatency: failed to fetch');
+  }
+
+  store.set({
+    subscriptionServersWidget: {
+      loading: false,
+      failed: !success,
+      latencyFetching: false,
       data,
     },
   });
@@ -39,7 +67,9 @@ async function renderServersWidget() {
   const renderedWidget = renderServerList({
     loading: widget.loading,
     failed: widget.failed,
+    latencyFetching: widget.latencyFetching,
     sections: widget.data,
+    onTestLatency: () => handleTestLatency(),
   });
 
   return preserveScrollForPage(() => {

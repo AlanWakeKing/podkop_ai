@@ -20,17 +20,60 @@ interface IGetSubscriptionServersResponse {
   data: ISubscriptionSectionRows[];
 }
 
-// Triggers a Clash API latency test for every location's urltest group (a handful of calls, one per
-// location), then reads back the resulting per-server latency from the Clash API proxy list - this
-// tests all servers in a section with far fewer requests than testing each of them individually.
-export async function getSubscriptionServersWithLatency(): Promise<IGetSubscriptionServersResponse> {
+async function getSubscriptionSections() {
   const configSections = await getConfigSections();
 
-  const subscriptionSections = configSections.filter(
-    (section): section is Podkop.ConfigSection & { proxy_config_type: 'subscription' } =>
+  return configSections.filter(
+    (
+      section,
+    ): section is Podkop.ConfigSection & {
+      proxy_config_type: 'subscription';
+    } =>
       section.connection_type === 'proxy' &&
       section.proxy_config_type === 'subscription',
   );
+}
+
+// Passive read: lists every subscription server alongside whatever latency the Clash API already has
+// cached from the last test (if any). Does NOT trigger a new network probe, so it's cheap enough to
+// call on every tab mount without loading the router.
+export async function getSubscriptionServers(): Promise<IGetSubscriptionServersResponse> {
+  const subscriptionSections = await getSubscriptionSections();
+
+  if (subscriptionSections.length === 0) {
+    return { success: true, data: [] };
+  }
+
+  const serversBySection = await Promise.all(
+    subscriptionSections.map(async (section) => {
+      const response = await PodkopShellMethods.getSubscriptionServers(
+        section['.name'],
+      );
+      return {
+        section,
+        servers: response.success ? response.data : [],
+      };
+    }),
+  );
+
+  const clashProxies = await PodkopShellMethods.getClashApiProxies();
+  const proxies = clashProxies.success ? clashProxies.data.proxies : {};
+
+  const data = serversBySection.map(({ section, servers }) =>
+    buildSectionRows(section, servers, proxies),
+  );
+
+  return { success: true, data };
+}
+
+// Active probe: triggers a real Clash API latency test for every location's urltest group (a handful
+// of calls, one per location - each group test probes all its member servers in one shot, which is
+// far cheaper than testing every server individually, but each call still does real network I/O and
+// can take a while - only call this from an explicit user action, e.g. a "Test latency" button, never
+// automatically on mount, since running it for every location at once can noticeably slow the router
+// down for other unrelated requests for tens of seconds.
+export async function testSubscriptionServersLatency(): Promise<IGetSubscriptionServersResponse> {
+  const subscriptionSections = await getSubscriptionSections();
 
   if (subscriptionSections.length === 0) {
     return { success: true, data: [] };
@@ -62,30 +105,38 @@ export async function getSubscriptionServersWithLatency(): Promise<IGetSubscript
   const clashProxies = await PodkopShellMethods.getClashApiProxies();
   const proxies = clashProxies.success ? clashProxies.data.proxies : {};
 
-  const data = serversBySection.map(({ section, servers }) => {
-    const rows = servers
-      .map((server) => {
-        const proxy = proxies[server.tag];
-        return {
-          code: server.tag,
-          displayName: server.remarks,
-          latency: proxy?.history?.[0]?.delay || 0,
-          selected: false,
-        };
-      })
-      .sort((a, b) => {
-        if (a.latency === 0 && b.latency === 0) return 0;
-        if (a.latency === 0) return 1;
-        if (b.latency === 0) return -1;
-        return a.latency - b.latency;
-      });
-
-    return {
-      code: section['.name'],
-      displayName: section['.name'],
-      servers: rows,
-    };
-  });
+  const data = serversBySection.map(({ section, servers }) =>
+    buildSectionRows(section, servers, proxies),
+  );
 
   return { success: true, data };
+}
+
+function buildSectionRows(
+  section: Podkop.ConfigSection,
+  servers: Podkop.SubscriptionServer[],
+  proxies: Record<string, { history?: { delay: number }[] }>,
+): ISubscriptionSectionRows {
+  const rows = servers
+    .map((server) => {
+      const proxy = proxies[server.tag];
+      return {
+        code: server.tag,
+        displayName: server.remarks,
+        latency: proxy?.history?.[0]?.delay || 0,
+        selected: false,
+      };
+    })
+    .sort((a, b) => {
+      if (a.latency === 0 && b.latency === 0) return 0;
+      if (a.latency === 0) return 1;
+      if (b.latency === 0) return -1;
+      return a.latency - b.latency;
+    });
+
+  return {
+    code: section['.name'],
+    displayName: section['.name'],
+    servers: rows,
+  };
 }

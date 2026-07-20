@@ -10,7 +10,13 @@ export function render() {
     E(
       'div',
       { id: 'subscription-servers-list' },
-      renderServerList({ loading: true, failed: false, sections: [] }),
+      renderServerList({
+        loading: true,
+        failed: false,
+        latencyFetching: false,
+        sections: [],
+        onTestLatency: () => {},
+      }),
     ),
   );
 }

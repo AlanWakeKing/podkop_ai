@@ -171,6 +171,7 @@ export interface StoreType {
   subscriptionServersWidget: {
     loading: boolean;
     failed: boolean;
+    latencyFetching: boolean;
     data: ISubscriptionSectionRows[];
   };
   diagnosticsRunAction: {
@@ -232,6 +233,7 @@ const initialStore: StoreType = {
   subscriptionServersWidget: {
     loading: true,
     failed: false,
+    latencyFetching: false,
     data: [],
   },
   ...initialDiagnosticStore,

@@ -908,11 +908,37 @@ async function getClashApiSecret() {
 }
 
 // src/podkop/methods/custom/getSubscriptionServersWithLatency.ts
-async function getSubscriptionServersWithLatency() {
+async function getSubscriptionSections() {
   const configSections = await getConfigSections();
-  const subscriptionSections = configSections.filter(
+  return configSections.filter(
     (section) => section.connection_type === "proxy" && section.proxy_config_type === "subscription"
   );
+}
+async function getSubscriptionServers() {
+  const subscriptionSections = await getSubscriptionSections();
+  if (subscriptionSections.length === 0) {
+    return { success: true, data: [] };
+  }
+  const serversBySection = await Promise.all(
+    subscriptionSections.map(async (section) => {
+      const response = await PodkopShellMethods.getSubscriptionServers(
+        section[".name"]
+      );
+      return {
+        section,
+        servers: response.success ? response.data : []
+      };
+    })
+  );
+  const clashProxies = await PodkopShellMethods.getClashApiProxies();
+  const proxies = clashProxies.success ? clashProxies.data.proxies : {};
+  const data = serversBySection.map(
+    ({ section, servers }) => buildSectionRows(section, servers, proxies)
+  );
+  return { success: true, data };
+}
+async function testSubscriptionServersLatency() {
+  const subscriptionSections = await getSubscriptionSections();
   if (subscriptionSections.length === 0) {
     return { success: true, data: [] };
   }
@@ -938,28 +964,31 @@ async function getSubscriptionServersWithLatency() {
   );
   const clashProxies = await PodkopShellMethods.getClashApiProxies();
   const proxies = clashProxies.success ? clashProxies.data.proxies : {};
-  const data = serversBySection.map(({ section, servers }) => {
-    const rows = servers.map((server) => {
-      const proxy = proxies[server.tag];
-      return {
-        code: server.tag,
-        displayName: server.remarks,
-        latency: proxy?.history?.[0]?.delay || 0,
-        selected: false
-      };
-    }).sort((a, b) => {
-      if (a.latency === 0 && b.latency === 0) return 0;
-      if (a.latency === 0) return 1;
-      if (b.latency === 0) return -1;
-      return a.latency - b.latency;
-    });
-    return {
-      code: section[".name"],
-      displayName: section[".name"],
-      servers: rows
-    };
-  });
+  const data = serversBySection.map(
+    ({ section, servers }) => buildSectionRows(section, servers, proxies)
+  );
   return { success: true, data };
+}
+function buildSectionRows(section, servers, proxies) {
+  const rows = servers.map((server) => {
+    const proxy = proxies[server.tag];
+    return {
+      code: server.tag,
+      displayName: server.remarks,
+      latency: proxy?.history?.[0]?.delay || 0,
+      selected: false
+    };
+  }).sort((a, b) => {
+    if (a.latency === 0 && b.latency === 0) return 0;
+    if (a.latency === 0) return 1;
+    if (b.latency === 0) return -1;
+    return a.latency - b.latency;
+  });
+  return {
+    code: section[".name"],
+    displayName: section[".name"],
+    servers: rows
+  };
 }
 
 // src/podkop/methods/custom/index.ts
@@ -967,7 +996,8 @@ var CustomPodkopMethods = {
   getConfigSections,
   getDashboardSections,
   getClashApiSecret,
-  getSubscriptionServersWithLatency
+  getSubscriptionServers,
+  testSubscriptionServersLatency
 };
 
 // src/constants.ts
@@ -1497,6 +1527,7 @@ var initialStore = {
   subscriptionServersWidget: {
     loading: true,
     failed: false,
+    latencyFetching: false,
     data: []
   },
   ...initialDiagnosticStore
@@ -4791,7 +4822,9 @@ function renderEmptyState() {
 function renderServerList({
   loading,
   failed,
-  sections
+  latencyFetching,
+  sections,
+  onTestLatency
 }) {
   if (loading) {
     return renderLoadingState4();
@@ -4802,20 +4835,35 @@ function renderServerList({
   if (sections.length === 0) {
     return renderEmptyState();
   }
-  return E(
-    "div",
-    { class: "pdk_subscription-page__sections" },
-    sections.map(
-      (section) => E("div", { class: "pdk_subscription-page__section" }, [
-        E("b", { class: "pdk_subscription-page__section__title" }, section.displayName),
-        E(
-          "div",
-          { class: "pdk_subscription-page__section__rows" },
-          section.servers.map(renderServerRow)
-        )
-      ])
+  return E("div", { class: "pdk_subscription-page__wrapper" }, [
+    E(
+      "div",
+      { class: "pdk_subscription-page__header" },
+      E(
+        "button",
+        {
+          class: "cbi-button cbi-button-action",
+          disabled: latencyFetching,
+          click: () => onTestLatency()
+        },
+        latencyFetching ? _("Testing\u2026") : _("Test latency")
+      )
+    ),
+    E(
+      "div",
+      { class: "pdk_subscription-page__sections" },
+      sections.map(
+        (section) => E("div", { class: "pdk_subscription-page__section" }, [
+          E("b", { class: "pdk_subscription-page__section__title" }, section.displayName),
+          E(
+            "div",
+            { class: "pdk_subscription-page__section__rows" },
+            section.servers.map(renderServerRow)
+          )
+        ])
+      )
     )
-  );
+  ]);
 }
 
 // src/podkop/tabs/subscription/render.ts
@@ -4829,7 +4877,14 @@ function render3() {
     E(
       "div",
       { id: "subscription-servers-list" },
-      renderServerList({ loading: true, failed: false, sections: [] })
+      renderServerList({
+        loading: true,
+        failed: false,
+        latencyFetching: false,
+        sections: [],
+        onTestLatency: () => {
+        }
+      })
     )
   );
 }
@@ -4843,7 +4898,7 @@ async function fetchSubscriptionServers() {
       failed: false
     }
   });
-  const { data, success } = await CustomPodkopMethods.getSubscriptionServersWithLatency();
+  const { data, success } = await CustomPodkopMethods.getSubscriptionServers();
   if (!success) {
     logger.error(
       "[SUBSCRIPTION]",
@@ -4852,8 +4907,29 @@ async function fetchSubscriptionServers() {
   }
   store.set({
     subscriptionServersWidget: {
+      ...store.get().subscriptionServersWidget,
       loading: false,
       failed: !success,
+      data
+    }
+  });
+}
+async function handleTestLatency() {
+  store.set({
+    subscriptionServersWidget: {
+      ...store.get().subscriptionServersWidget,
+      latencyFetching: true
+    }
+  });
+  const { data, success } = await CustomPodkopMethods.testSubscriptionServersLatency();
+  if (!success) {
+    logger.error("[SUBSCRIPTION]", "handleTestLatency: failed to fetch");
+  }
+  store.set({
+    subscriptionServersWidget: {
+      loading: false,
+      failed: !success,
+      latencyFetching: false,
       data
     }
   });
@@ -4865,7 +4941,9 @@ async function renderServersWidget() {
   const renderedWidget = renderServerList({
     loading: widget.loading,
     failed: widget.failed,
-    sections: widget.data
+    latencyFetching: widget.latencyFetching,
+    sections: widget.data,
+    onTestLatency: () => handleTestLatency()
   });
   return preserveScrollForPage(() => {
     container.replaceChildren(renderedWidget);
@@ -4928,6 +5006,12 @@ var styles5 = `
 
 .pdk_subscription-page {
     width: 100%;
+}
+
+.pdk_subscription-page__header {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
 }
 
 .pdk_subscription-page__sections {
